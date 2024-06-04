@@ -1,0 +1,82 @@
+version: '3'
+
+services:
+  tiler:
+    image:  ghcr.io/stac-utils/titiler-pgstac:0.6.0
+    platform: linux/amd64
+    ports:
+      - "8081:8081"
+    environment:
+      # Postgres connection
+      - POSTGRES_USER=username
+      - POSTGRES_PASS=password
+      - POSTGRES_DBNAME=postgis
+      - POSTGRES_HOST=database
+      - POSTGRES_PORT=5432
+      # PG connection
+      - DB_MIN_CONN_SIZE=1
+      - DB_MAX_CONN_SIZE=1
+      - GDAL_CACHEMAX=20%
+      - GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR
+      - GDAL_INGESTED_BYTES_AT_OPEN=32768
+      - GDAL_HTTP_MERGE_CONSECUTIVE_RANGES=YES
+      - GDAL_HTTP_MULTIPLEX=YES
+      - GDAL_HTTP_VERSION=2
+      - VSI_CACHE=TRUE
+      - VSI_CACHE_SIZE=327680
+      - CPL_VSIL_CURL_CACHE_SIZE=327680
+      # TiTiler Config
+      - RIO_TILER_MAX_THREADS=1
+      - MOSAIC_CONCURRENCY=1
+      # AWS S3 endpoint config
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    depends_on:
+      - database
+      - webserver
+    command:
+      bash -c "bash /tmp/scripts/wait-for-it.sh -t 120 -h database -p 5432 && uvicorn titiler.pgstac.main:app --port 8081 --host 0.0.0.0 --workers 1"
+    volumes:
+      - ./scripts:/tmp/scripts
+      - ./data:/data
+
+  webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      - PORT=8082
+    volumes:
+      - ./data:/tmp/data
+
+  database:
+    image: ghcr.io/stac-utils/pgstac:v${PGSTAC_VERSION-0.7.3}
+    environment:
+      - POSTGRES_USER=username
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=postgis
+      - PGUSER=username
+      - PGDATABASE=postgis
+    ports:
+      - "5439:5432"
+    command: postgres -N 500
+    volumes:
+      - ./.pgdata:/var/lib/postgresql/data
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./.pgdata:/var/lib/postgresql/data
+      - /:/rootfs:ro \
+      - /var/run:/var/run:ro \
+      - /sys:/sys:ro \
+      - /var/lib/docker/:/var/lib/docker:ro \
+      - /dev/disk/:/dev/disk:ro \
+
+networks:
+  default:
+    name: titiler-pgstac-debug
